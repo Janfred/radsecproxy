@@ -35,6 +35,8 @@
 #define _GNU_SOURCE
 #include <signal.h>
 #include <sys/socket.h>
+#include <sys/un.h>
+#include <sys/stat.h>
 #include <netinet/in.h>
 #include <netdb.h>
 #include <string.h>
@@ -43,11 +45,10 @@
 #if defined(HAVE_MALLOPT)
 #include <malloc.h>
 #endif
-#ifdef SYS_SOLARIS9
 #include <fcntl.h>
-#endif
 #include <sys/time.h>
 #include <sys/types.h>
+#include <sys/file.h>
 #include <ctype.h>
 #include <sys/wait.h>
 #include <arpa/inet.h>
@@ -85,6 +86,8 @@ extern char *optarg;
 #endif
 static const struct protodefs *protodefs[RAD_PROTOCOUNT];
 pthread_attr_t pthread_attr;
+
+static struct radiuscap radius_cap;
 
 /* minimum required declarations to avoid reordering code */
 struct realm *adddynamicrealmserver(struct realm *realm, char *id);
@@ -521,6 +524,50 @@ errexit:
     removeclientrqs_sendrq_freeserver_lock(0);
 }
 
+void write_debug_to_socket(struct client *client, struct server *server, uint8_t *buf, uint8_t request){
+    uint16_t len = RADLEN(buf);
+
+    struct clsrvconf *from;
+    struct clsrvconf *to;
+
+    uint32_t from_sock;
+    uint32_t to_sock;
+
+    if (radius_cap.active) {
+        if (request) {
+            from = client->conf;
+            from_sock = htonl(client->sock);
+            to = server->conf;
+            to_sock = htonl(server->sock);
+        } else {
+            from = server->conf;
+            from_sock = htonl(server->sock);
+            to = client->conf;
+            to_sock = htonl(client->sock);
+        }
+
+        uint16_t from_length = strlen(from->name);
+        uint16_t to_length = strlen(to->name);
+        uint16_t htons_from_length = htons(from_length);
+        uint16_t htons_to_length = htons(to_length);
+
+        debug(DBG_INFO, "Writing data to the socket");
+
+        pthread_mutex_lock(&radius_cap.lock);
+
+        write(radius_cap.fd, &request, 1);
+        write(radius_cap.fd, &htons_from_length, 2);
+        write(radius_cap.fd, from->name, from_length);
+        write(radius_cap.fd, &from_sock, 4);
+        write(radius_cap.fd, &htons_to_length, 2);
+        write(radius_cap.fd, to->name, to_length);
+        write(radius_cap.fd, &to_sock, 4);
+        write(radius_cap.fd, buf, len);
+
+        pthread_mutex_unlock(&radius_cap.lock);
+    }
+}
+
 void sendreply(struct request *rq) {
     uint8_t first;
     struct client *to = rq->from;
@@ -534,6 +581,9 @@ void sendreply(struct request *rq) {
 	debug(DBG_ERR, "sendreply: radmsg2buf failed");
 	return;
     }
+
+    if (rq->to)
+        write_debug_to_socket(rq->from, rq->to, rq->replybuf, 1);
 
     pthread_mutex_lock(&to->replyq->mutex);
     first = list_first(to->replyq->entries) == NULL;
@@ -1235,11 +1285,11 @@ int radsrv(struct request *rq) {
     char tmp[INET6_ADDRSTRLEN];
 
     msg = buf2radmsg(rq->buf, from->conf->secret, from->conf->secret_len, NULL);
-    free(rq->buf);
-    rq->buf = NULL;
 
     if (!msg) {
 	debug(DBG_NOTICE, "radsrv: ignoring request from %s (%s), validation failed.", from->conf->name, addr2string(from->addr, tmp, sizeof(tmp)));
+    free(rq->buf);
+    rq->buf = NULL;
 	freerq(rq);
 	return 0;
     }
@@ -1364,6 +1414,10 @@ int radsrv(struct request *rq) {
     if (ttlres == -1 && (options.addttl || to->conf->addttl))
 	addttlattr(msg, options.ttlattrtype, to->conf->addttl ? to->conf->addttl : options.addttl);
 
+    write_debug_to_socket(from, to, rq->buf, 0);
+    free(rq->buf);
+    rq->buf = NULL;
+
     free(userascii);
     rq->to = to;
     sendrq(rq);
@@ -1374,6 +1428,8 @@ int radsrv(struct request *rq) {
 rmclrqexit:
     rmclientrq(rq, msg->id);
 exit:
+    free(rq->buf);
+    rq->buf = NULL;
     freerq(rq);
     free(userascii);
     if (realm) {
@@ -1409,8 +1465,6 @@ void replyh(struct server *server, unsigned char *buf) {
 #ifdef DEBUG
     printfchars(NULL, "origauth/buf+4", "%02x ", buf + 4, 16);
 #endif
-    free(buf);
-    buf = NULL;
     if (!msg) {
         debug(DBG_NOTICE, "replyh: ignoring message from server %s, validation failed", server->conf->name);
 	goto errunlock;
@@ -1512,6 +1566,9 @@ void replyh(struct server *server, unsigned char *buf) {
 
     debug(DBG_DBG, "replyh: passing %s (id %d) to client %s (%s)", radmsgtype2string(msg->code), msg->id, from->conf->name, addr2string(from->addr, tmp, sizeof(tmp)));
 
+    free(buf);
+    buf = NULL;
+
     radmsg_free(rqout->rq->msg);
     rqout->rq->msg = msg;
     sendreply(newrqref(rqout->rq));
@@ -1520,6 +1577,8 @@ void replyh(struct server *server, unsigned char *buf) {
     return;
 
 errunlock:
+    free(buf);
+    buf = NULL;
     radmsg_free(msg);
     pthread_mutex_unlock(rqout->lock);
     return;
@@ -2802,6 +2861,8 @@ void getmainconfig(const char *configfile) {
         "LogKey", CONF_STR, &log_key_str,
         "LogFullUsername", CONF_BLN, &options.logfullusername,
 	    "LoopPrevention", CONF_BLN, &options.loopprevention,
+        "RadiusCapSocket", CONF_STR, &options.radius_cap_socket,
+        "RadiusCapSocketLock", CONF_STR, &options.radius_cap_socket_lock,
 	    "Client", CONF_CBK, confclient_cb, NULL,
 	    "Server", CONF_CBK, confserver_cb, NULL,
 	    "Realm", CONF_CBK, confrealm_cb, NULL,
@@ -2973,8 +3034,26 @@ int createpidfile(const char *pidfile) {
     return f && !fclose(f) && r >= 0;
 }
 
+void *radiuscap_listen(void *arg) {
+    struct sockaddr_un addr;
+    unsigned int addrlen = sizeof (struct sockaddr_in);
+    fd_set fds;
+    while(1) {
+        radius_cap.fd = accept(radius_cap.sock, (struct sockaddr *) &addr, &addrlen);
+        radius_cap.active = 1;
+        debug(DBG_INFO, "radiuscap_listen: A client connected to the socket");
+        FD_ZERO(&fds);
+        FD_SET(radius_cap.fd, &fds);
+        select(radius_cap.fd + 1, &fds, NULL, NULL, NULL);
+        debug(DBG_INFO, "radiuscap_listen: Got out of the select. Closing the socket");
+        radius_cap.active = 0;
+        close(radius_cap.fd);
+    }
+}
+
 int radsecproxy_main(int argc, char **argv) {
     pthread_t sigth;
+    pthread_t radcapth;
     sigset_t sigset;
     struct list_node *entry;
     uint8_t foreground = 0, pretend = 0, loglevel = 0;
@@ -3051,6 +3130,43 @@ int radsecproxy_main(int argc, char **argv) {
     pthread_sigmask(SIG_BLOCK, &sigset, NULL);
     if (pthread_create(&sigth, &pthread_attr, sighandler, NULL))
         debugx(1, DBG_ERR, "pthread_create failed: sighandler");
+
+    if (options.radius_cap_socket) {
+        if (!options.radius_cap_socket_lock) {
+            options.radius_cap_socket_lock = strdup(options.radius_cap_socket);
+            options.radius_cap_socket_lock = strcat(options.radius_cap_socket_lock, ".lock");
+        }
+
+        debug(DBG_INFO, "RadiusCapSocket:     %s", options.radius_cap_socket);
+        debug(DBG_INFO, "RadiusCapSocketLock: %s", options.radius_cap_socket_lock);
+
+        struct sockaddr_un server_addr;
+        memset(&server_addr, 0, sizeof(server_addr));
+        server_addr.sun_family = AF_UNIX;
+        strncpy(server_addr.sun_path, options.radius_cap_socket, sizeof(server_addr.sun_path)-1);
+
+        int lock_fd;
+        if ((lock_fd = open(options.radius_cap_socket_lock, O_RDONLY | O_CREAT, 0600)) == -1)
+            debugx(1, DBG_ERR, "Could not open Lock file %s for RadiusCapSocket.", options.radius_cap_socket_lock);
+
+        int lock_ret;
+        if ((lock_ret = flock(lock_fd, LOCK_EX | LOCK_NB)) != 0)
+            debugx(1, DBG_ERR, "The lock file %s is held by another process.", options.radius_cap_socket_lock);
+
+        if ((radius_cap.sock = socket(AF_LOCAL, SOCK_STREAM, 0))==0)
+            debugx(1, DBG_ERR, "Socket for RadiusCapSocket could not be created");
+
+        unlink(options.radius_cap_socket);
+
+        debug(DBG_INFO, "Binding to %s", server_addr.sun_path);
+
+        if (bind(radius_cap.sock, (struct sockaddr *) &server_addr, sizeof(server_addr)) != 0)
+            debugx(1, DBG_ERR, "Could not bind to RadiusCapSocket %s Errno %d %s", options.radius_cap_socket, errno, strerror(errno));
+
+        listen(radius_cap.sock, 1);
+
+        pthread_create(&radcapth, &pthread_attr, radiuscap_listen, NULL);
+    }
 
     for (entry = list_first(srvconfs); entry; entry = list_next(entry)) {
 	srvconf = (struct clsrvconf *)entry->data;

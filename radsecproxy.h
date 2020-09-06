@@ -87,6 +87,8 @@ struct options {
     char *ftickssyslogfacility;
     char *fticksprefix;
     char *ttlattr;
+    char *radius_cap_socket;
+    char *radius_cap_socket_lock;
     uint32_t ttlattrtype[2];
     uint8_t addttl;
     uint8_t loglevel;
@@ -246,6 +248,13 @@ struct protodefs {
     void (*addserverextra)(struct clsrvconf *);
     void (*setsrcres)();
     void (*initextra)();
+};
+
+struct radiuscap {
+    pthread_mutex_t lock;
+    uint8_t active;
+    int sock;
+    int fd;
 };
 
 #define RADLEN(x) ntohs(((uint16_t *)(x))[1])
