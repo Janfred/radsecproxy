@@ -28,6 +28,12 @@
 #include "debug.h"
 #include "util.h"
 
+#define KEYLOG_FIRSTLINE "# SSL key logfile generated inside tls.c\n"
+#define KEYLOG_FIRSTLINE_LEN (sizeof(KEYLOG_FIRSTLINE) - 1)
+
+static int keylog_file_fd = -1;
+static pthread_mutex_t keylog_lock = PTHREAD_MUTEX_INITIALIZER;
+
 static void setprotoopts(struct commonprotoopts *opts);
 static char **getlistenerargs();
 void *tlslistener(void *arg);
@@ -61,6 +67,29 @@ static const struct protodefs protodefs = {
 static struct addrinfo *srcres = NULL;
 static uint8_t handle;
 static struct commonprotoopts *protoopts = NULL;
+
+static void init_keylog_file(void) {
+    if (keylog_file_fd >=0)
+        return;
+
+    const char *filename = getenv("SSLKEYLOGFILE");
+    if (filename) {
+        keylog_file_fd = open(filename, O_WRONLY | O_APPEND | O_CREAT, 0600);
+        if ( keylog_file_fd >= 0 && lseek(keylog_file_fd, 0, SEEK_END) == 0) {
+            write(keylog_file_fd, KEYLOG_FIRSTLINE, KEYLOG_FIRSTLINE_LEN);
+        }
+    }
+}
+
+static void keylog_callback(const SSL *ssl, const char *line) {
+    init_keylog_file();
+    if (keylog_file_fd >= 0) {
+        pthread_mutex_lock(&keylog_lock);
+        write(keylog_file_fd, line, strlen(line));
+        write(keylog_file_fd, "\n", 1);
+        pthread_mutex_unlock(&keylog_lock);
+    }
+}
 
 const struct protodefs *tlsinit(uint8_t h) {
     handle = h;
@@ -141,6 +170,9 @@ int tlsconnect(struct server *server, int timeout, char *text) {
         }
 
         server->ssl = SSL_new(ctx);
+
+        SSL_CTX_set_keylog_callback(ctx, &keylog_callback);
+
         pthread_mutex_unlock(&server->conf->tlsconf->lock);
         if (!server->ssl)
             continue;
