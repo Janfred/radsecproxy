@@ -3163,6 +3163,9 @@ int radsecproxy_main(int argc, char **argv) {
         if (bind(radius_cap.sock, (struct sockaddr *) &server_addr, sizeof(server_addr)) != 0)
             debugx(1, DBG_ERR, "Could not bind to RadiusCapSocket %s Errno %d %s", options.radius_cap_socket, errno, strerror(errno));
 
+        debug(DBG_INFO, "Setting chmod 0777 on socket");
+        chmod(options.radius_cap_socket, 0777);
+
         listen(radius_cap.sock, 1);
 
         pthread_create(&radcapth, &pthread_attr, radiuscap_listen, NULL);
