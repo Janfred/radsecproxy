@@ -3133,7 +3133,8 @@ int radsecproxy_main(int argc, char **argv) {
 
     if (options.radius_cap_socket) {
         if (!options.radius_cap_socket_lock) {
-            options.radius_cap_socket_lock = strdup(options.radius_cap_socket);
+            options.radius_cap_socket_lock = malloc(strlen(options.radius_cap_socket) + 6);
+            strcpy(options.radius_cap_socket_lock, options.radius_cap_socket);
             options.radius_cap_socket_lock = strcat(options.radius_cap_socket_lock, ".lock");
         }
 
