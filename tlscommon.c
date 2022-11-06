@@ -137,6 +137,32 @@ static int pem_passwd_cb(char *buf, int size, int rwflag, void *userdata) {
     return pwdlen;
 }
 
+static int servername_cb(SSL *s, int *al, void *arg) {
+	const char *req_servername;
+	struct list_node *node;
+	struct tls_sni_alt *sni;
+	int i;
+
+	req_servername = SSL_get_servername(s, TLSEXT_NAMETYPE_host_name);
+	if(req_servername == NULL)
+		return SSL_TLSEXT_ERR_OK;
+
+	node = list_first(arg);
+	while(node != NULL){
+		sni = node->data;
+		for(i=0; sni->servername[i]; i++){
+			if(!strcmp(sni->servername[i], req_servername))
+				continue;
+			debug(DBG_DBG, "servername_cb: found matching Server Name definition, changing context");
+			SSL_set_SSL_CTX(s, sni->tlsctx);
+			return SSL_TLSEXT_ERR_OK;
+		}
+		node = list_next(node);
+	}
+
+	return SSL_TLSEXT_ERR_OK;
+}
+
 static int verify_cb(int ok, X509_STORE_CTX *ctx) {
     char *buf = NULL;
     X509 *err_cert;
@@ -380,7 +406,7 @@ static int tlsaddcacrl(SSL_CTX *ctx, struct tls *conf) {
     return 1;
 }
 
-static SSL_CTX *tlscreatectx(uint8_t type, struct tls *conf) {
+static SSL_CTX *tlscreatectx_sni(uint8_t type, struct tls *conf, char *cert, char *key, char *keypwd) {
     SSL_CTX *ctx = NULL;
     unsigned long error;
 
@@ -520,6 +546,11 @@ static SSL_CTX *tlscreatectx(uint8_t type, struct tls *conf) {
     return ctx;
 }
 
+static SSL_CTX *tlscreatectx(uint8_t type, struct tls *conf) {
+  	return tlscreatectx_sni(type, conf, conf->certfile, conf->certkeyfile, conf->certkeypwd);
+}
+
+
 struct tls *tlsgettls(char *alt1, char *alt2) {
     struct tls *t;
 
@@ -527,6 +558,40 @@ struct tls *tlsgettls(char *alt1, char *alt2) {
     if (!t && alt2)
 	t = hash_read(tlsconfs, alt2, strlen(alt2));
     return t;
+}
+
+int tlsgetctx_sni(uint8_t type, struct tls *t) {
+	struct list_node *node;
+	struct tls_sni_alt *sni;
+
+	node = list_first(t->sni_alt);
+	while(node != NULL){
+		sni = node->data;
+		switch(type) {
+#ifdef RADPROT_TLS
+		case RAD_TLS:
+			if(!sni->tlsctx){
+				sni->tlsctx = tlscreatectx_sni(RAD_TLS, t, sni->certfile, sni->certkeyfile, sni->certkeypwd);
+				if(!sni->tlsctx)
+					return 0;
+			}
+			break;
+#endif
+#ifdef RADPROT_DTLS
+		case RAD_DTLS:
+			if(!sni->dtlsctx){
+				sni->dtlsctx = tlscreatectx_sni(RAD_DTLS, t, sni->certfile, sni->certkeyfile, sni->certkeypwd);
+				if(!sni->dtlsctx)
+					return 0;
+			}
+			break;
+#endif
+		default:
+			return 0;
+		}
+		node = list_next(node);
+	}
+	return 1;
 }
 
 SSL_CTX *tlsgetctx(uint8_t type, struct tls *t) {
@@ -871,6 +936,48 @@ static int conf_tls_version(const char *version, int *min, int *max) {
 }
 #endif
 
+int confsni_cb(struct gconffile **cf, void *arg, char *block, char *opt, char *val) {
+	struct tls *tlsconf = (struct tls *) arg;
+    struct tls_sni_alt *sni_alt;
+
+    debug(DBG_DBG, "confsni_cb called for %s", block);
+
+    sni_alt = malloc(sizeof(struct tls_sni_alt));
+    if(!sni_alt) {
+    	debug(DBG_ERR, "confsni_cb: malloc failed");
+    	return 0;
+    }
+    memset(sni_alt, 0, sizeof(struct tls_sni_alt));
+
+    if (!getgenericconfig(cf, block,
+    			"ServerName", CONF_MSTR, &sni_alt->servername,
+    			"CertificateFile", CONF_STR, &sni_alt->certfile,
+				"CertificateKeyFile", CONF_STR, &sni_alt->certkeyfile,
+				"CertificateKeyPassword", CONF_STR, &sni_alt->certkeypwd,
+				NULL
+    		)) {
+    	debug(DBG_ERR, "confsni_cb: configuration error in block %s", val);
+    	goto errexit;
+    }
+    if(!sni_alt->certfile || !sni_alt->certkeyfile){
+    	debug(DBG_ERR, "confsni_cb: CertificateFile and CertificateKeyFile must be specified in block %s", val);
+    	goto errexit;
+    }
+
+    if(!list_push(tlsconf->sni_alt, sni_alt)){
+    	debug(DBG_ERR, "confsni_cb: malloc for list item failed");
+    	goto errexit;
+    }
+
+	return 1;
+errexit:
+	free(sni_alt->certfile);
+	free(sni_alt->certkeyfile);
+	free(sni_alt->certkeypwd);
+	free(sni_alt);
+	return 0;
+}
+
 int conftls_cb(struct gconffile **cf, void *arg, char *block, char *opt, char *val) {
     struct tls *conf;
     long int expiry = LONG_MIN;
@@ -888,12 +995,19 @@ int conftls_cb(struct gconffile **cf, void *arg, char *block, char *opt, char *v
     }
     memset(conf, 0, sizeof(struct tls));
 
+    conf->sni_alt = list_create();
+    if(!conf->sni_alt){
+    	debug(DBG_ERR, "conftls_rb: malloc for list failed");
+    	goto errexit;
+    }
+
     if (!getgenericconfig(cf, block,
 			  "CACertificateFile", CONF_STR, &conf->cacertfile,
 			  "CACertificatePath", CONF_STR, &conf->cacertpath,
 			  "CertificateFile", CONF_STR, &conf->certfile,
 			  "CertificateKeyFile", CONF_STR, &conf->certkeyfile,
 			  "CertificateKeyPassword", CONF_STR, &conf->certkeypwd,
+			  "SNIAlternative", CONF_CBK,  confsni_cb, conf,
 			  "CacheExpiry", CONF_LINT, &expiry,
 			  "CRLCheck", CONF_BLN, &conf->crlcheck,
 			  "PolicyOID", CONF_MSTR, &conf->policyoids,
@@ -997,10 +1111,19 @@ int conftls_cb(struct gconffile **cf, void *arg, char *block, char *opt, char *v
     }
     if (!tlsgetctx(RAD_TLS, conf))
 	debug(DBG_ERR, "conftls_cb: error creating ctx for TLS block %s", val);
+    if (!tlsgetctx_sni(RAD_TLS, conf))
+    	debug(DBG_ERR, "conftls_cb: error creating ctx for SNI configs in TLS block %s", val);
+
+    if(list_count(conf->sni_alt) > 0){
+    	SSL_CTX_set_tlsext_servername_callback(conf->tlsctx, servername_cb);
+    	SSL_CTX_set_tlsext_servername_arg(conf->tlsctx, conf->sni_alt);
+    }
+
     debug(DBG_DBG, "conftls_cb: added TLS block %s", val);
     return 1;
 
 errexit:
+	list_destroy(conf->sni_alt);
     free(conf->cacertfile);
     free(conf->cacertpath);
     free(conf->certfile);

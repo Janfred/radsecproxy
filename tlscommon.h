@@ -17,6 +17,7 @@ struct tls {
     char *certfile;
     char *certkeyfile;
     char *certkeypwd;
+    struct list *sni_alt;
     uint8_t crlcheck;
     char **policyoids;
     char *cipherlist;
@@ -38,6 +39,15 @@ struct tls {
     SSL_CTX *dtlsctx;
 	SSL *dtlssslprep;
     pthread_mutex_t lock;
+};
+
+struct tls_sni_alt {
+	char **servername;
+	char *certfile;
+	char *certkeyfile;
+	char *certkeypwd;
+	SSL_CTX *tlsctx;
+	SSL_CTX *dtlsctx;
 };
 
 #if defined(RADPROT_TLS) || defined(RADPROT_DTLS)
