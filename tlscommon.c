@@ -143,9 +143,14 @@ static int servername_cb(SSL *s, int *al, void *arg) {
 	struct tls_sni_alt *sni;
 	int i;
 
+	debug(DBG_DBG, "servername_cb: servername callback called");
+
 	req_servername = SSL_get_servername(s, TLSEXT_NAMETYPE_host_name);
+
 	if(req_servername == NULL)
 		return SSL_TLSEXT_ERR_OK;
+
+	debug(DBG_DBG, "servername_cb: Requested server name is %s", req_servername);
 
 	node = list_first(arg);
 	while(node != NULL){
@@ -470,12 +475,12 @@ static SSL_CTX *tlscreatectx_sni(uint8_t type, struct tls *conf, char *cert, cha
     }
 #endif
 
-    if (conf->certkeypwd) {
-        SSL_CTX_set_default_passwd_cb_userdata(ctx, conf->certkeypwd);
+    if (keypwd) {
+        SSL_CTX_set_default_passwd_cb_userdata(ctx, keypwd);
         SSL_CTX_set_default_passwd_cb(ctx, pem_passwd_cb);
     }
-    if (!SSL_CTX_use_certificate_chain_file(ctx, conf->certfile) ||
-        !SSL_CTX_use_PrivateKey_file(ctx, conf->certkeyfile, SSL_FILETYPE_PEM) ||
+    if (!SSL_CTX_use_certificate_chain_file(ctx, cert) ||
+        !SSL_CTX_use_PrivateKey_file(ctx, key, SSL_FILETYPE_PEM) ||
         !SSL_CTX_check_private_key(ctx)) {
         while ((error = ERR_get_error()))
             debug(DBG_ERR, "SSL: %s", ERR_error_string(error, NULL));
