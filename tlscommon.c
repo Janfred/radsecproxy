@@ -156,7 +156,7 @@ static int servername_cb(SSL *s, int *al, void *arg) {
 	while(node != NULL){
 		sni = node->data;
 		for(i=0; sni->servername[i]; i++){
-			if(!strcmp(sni->servername[i], req_servername))
+			if(strcmp(sni->servername[i], req_servername) != 0)
 				continue;
 			debug(DBG_DBG, "servername_cb: found matching Server Name definition, changing context");
 			SSL_set_SSL_CTX(s, sni->tlsctx);
@@ -164,6 +164,8 @@ static int servername_cb(SSL *s, int *al, void *arg) {
 		}
 		node = list_next(node);
 	}
+
+	debug(DBG_DBG, "servername_cb: no matching server name found, falling back to default.");
 
 	return SSL_TLSEXT_ERR_OK;
 }
