@@ -575,6 +575,7 @@ void *tlsservernew(void *arg) {
         SSL_set_ex_data(ssl, RADSEC_TLS_EX_INDEX_CLSRVCONF, (void *) conf);
 
         if (conf->tlspsk) {
+        	debug(DBG_DBG, "tlsservernew: Set callbacks for TLSPSK");
         	SSL_set_psk_find_session_callback(ssl, psk_find_session_callback);
     		SSL_set_psk_server_callback(ssl, psk_server_callback);
         }
