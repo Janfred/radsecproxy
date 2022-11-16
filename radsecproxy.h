@@ -174,6 +174,8 @@ struct clsrvconf {
     char *fticks_visinst;
     uint8_t sni;
     char *sniservername;
+    char *tlspsk;
+    char *tlspskidentity;
 };
 
 #include "tlscommon.h"

@@ -10,6 +10,8 @@
 #define ASN1_STRING_length(o) ((o)->length)
 #endif
 
+#define RADSEC_TLS_EX_INDEX_CLSRVCONF (12)
+
 struct tls {
     char *name;
     char *cacertfile;
@@ -21,6 +23,7 @@ struct tls {
     char **policyoids;
     char *cipherlist;
     char *ciphersuites;
+    char *psk_hint;
     uint32_t cacheexpiry;
     int tlsminversion;
     int tlsmaxversion;
@@ -54,6 +57,10 @@ void tlsreloadcrls();
 int tlssetsni(SSL *ssl, char *sni);
 int sslconnecttimeout(SSL *ssl, int timeout);
 int sslaccepttimeout (SSL *ssl, int timeout);
+int psk_use_session_callback(SSL *ssl, const EVP_MD *md, const unsigned char **id, size_t *idlen, SSL_SESSION **sess);
+int psk_find_session_callback(SSL *ssl, const unsigned char *identity, size_t identity_len, SSL_SESSION **sess);
+unsigned int psk_client_callback(SSL *ssl, const char *hint, char *identity, unsigned int max_identity_len, unsigned char *psk, unsigned int max_psk_len);
+unsigned int psk_server_callback(SSL *ssl,             const char *identity,                                unsigned char *psk, unsigned int max_psk_len);
 #endif
 
 /* Local Variables: */

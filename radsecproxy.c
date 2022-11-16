@@ -2553,20 +2553,20 @@ int compileserverconfig(struct clsrvconf *conf, const char *block) {
     int i;
 #if defined(RADPROT_TLS) || defined(RADPROT_DTLS)
     if (conf->type == RAD_TLS || conf->type == RAD_DTLS) {
-    	conf->tlsconf = conf->tls
-            ? tlsgettls(conf->tls, NULL)
-            : tlsgettls("defaultServer", "default");
-        if (!conf->tlsconf) {
-            debug(DBG_ERR, "error in block %s, no tls context defined", block);
-            return 0;
-        }
-        if (conf->confmatchcertattrs) {
-            for (i=0; conf->confmatchcertattrs[i]; i++){
-                if (!addmatchcertattr(conf, conf->confmatchcertattrs[i])) {
-                    debugx(1, DBG_ERR, "error in block %s, invalid MatchCertificateAttributeValue", block);
-                }
-            }
-        }
+   		conf->tlsconf = conf->tls
+   			? tlsgettls(conf->tls, NULL)
+    		: tlsgettls("defaultServer", "default");
+   		if (!conf->tlsconf) {
+   			debug(DBG_ERR, "error in block %s, no tls context defined", block);
+   			return 0;
+    	}
+    	if (conf->confmatchcertattrs) {
+    		for (i=0; conf->confmatchcertattrs[i]; i++){
+    			if (!addmatchcertattr(conf, conf->confmatchcertattrs[i])) {
+    				debugx(1, DBG_ERR, "error in block %s, invalid MatchCertificateAttributeValue", block);
+   				}
+    		}
+    	}
     }
 #endif
 
@@ -2642,6 +2642,8 @@ int confserver_cb(struct gconffile **cf, void *arg, char *block, char *opt, char
             "tls", CONF_STR, &conf->tls,
             "MatchCertificateAttribute", CONF_MSTR, &conf->confmatchcertattrs,
             "CertificateNameCheck", CONF_BLN, &conf->certnamecheck,
+			"TLSPSK", CONF_STR, &conf->tlspsk,
+			"TLSPSKIdentity", CONF_STR, &conf->tlspskidentity,
 #endif
             "addTTL", CONF_LINT, &addttl,
             "tcpKeepalive", CONF_BLN, &conf->keepalive,

@@ -165,6 +165,8 @@ int tlsconnect(struct server *server, int timeout, char *text) {
                 goto concleanup;
             }
 
+            SSL_set_ex_data(server->ssl, RADSEC_TLS_EX_INDEX_CLSRVCONF, (void *) &server->conf);
+
             if (server->conf->sni) {
                 struct in6_addr tmp;
                 char *servername = server->conf->sniservername ? server->conf->sniservername : 
@@ -175,6 +177,11 @@ int tlsconnect(struct server *server, int timeout, char *text) {
                 }
             }
             
+            if (server->conf->tlspsk) {
+            	SSL_set_psk_find_session_callback(server->ssl, psk_find_session_callback);
+            	SSL_set_psk_server_callback(server->ssl, psk_server_callback);
+            }
+
             SSL_set_fd(server->ssl, server->sock);
             if (sslconnecttimeout(server->ssl, 5) <= 0) {
                 while ((error = ERR_get_error()))
@@ -565,6 +572,7 @@ void *tlsservernew(void *arg) {
         if (!ssl)
             goto exit;
 
+        SSL_set_ex_data(ssl, RADSEC_TLS_EX_INDEX_CLSRVCONF, (void *) conf);
         SSL_set_fd(ssl, s);
         if (sslaccepttimeout(ssl, 30) <= 0) {
             while ((error = ERR_get_error()))

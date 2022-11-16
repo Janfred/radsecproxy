@@ -191,6 +191,71 @@ static int verify_cb(int ok, X509_STORE_CTX *ctx) {
     return ok;
 }
 
+int psk_use_session_callback(SSL *ssl, const EVP_MD *md, const unsigned char **id, size_t *idlen, SSL_SESSION **sess);
+int psk_find_session_callback(SSL *ssl, const unsigned char *identity, size_t identity_len, SSL_SESSION **sess) {
+	struct clsrvconf *conf;
+	SSL_SESSION *newsess;
+	const SSL_CIPHER *cipher = NULL;
+	const uint8_t cipherid[] = {0x13, 0x01};
+
+	debug(DBG_DBG, "psk_find_session_cb: Trying to find PSK");
+
+	conf = (struct clsrvconf *) SSL_get_ex_data(ssl, RADSEC_TLS_EX_INDEX_CLSRVCONF);
+
+	if(conf->tlspsk == NULL || conf->tlspskidentity == NULL ) {
+		debug(DBG_DBG, "psk_find_session_cb: No TLSPSK for server %s configured. Resuming with certificates.", conf->name);
+		*sess = NULL;
+		return 1;
+	}
+	if( (strlen(conf->tlspskidentity) != identity_len) || (strncmp(conf->tlspskidentity, (char *)identity, identity_len) != 0)) {
+		debug(DBG_WARN, "psk_find_session_cb: TLSPSKIdentity for %s did not match.", conf->name);
+		return 0;
+	}
+
+	cipher = SSL_CIPHER_find(ssl, cipherid);
+	if(cipher == NULL){
+		debug(DBG_WARN, "psk_find_session_cb: Could not find a suitable SSL Cipher Suite");
+		return 0;
+	}
+
+
+	newsess = SSL_SESSION_new();
+	if( newsess == NULL
+			|| !SSL_SESSION_set1_master_key(newsess, (unsigned char *)conf->tlspsk, strlen(conf->tlspsk))
+			|| !SSL_SESSION_set_cipher(newsess, cipher)
+			|| !SSL_SESSION_set_protocol_version(newsess, SSL_version(ssl))) {
+		debug(DBG_WARN, "psk_find_session_cb: Error in PSK session creation for server %s", conf->name);
+		return 0;
+	}
+
+	*sess = newsess;
+	return 1;
+}
+
+unsigned int psk_client_callback(SSL *ssl, const char *hint, char *identity, unsigned int max_identity_len, unsigned char *psk, unsigned int max_psk_len);
+unsigned int psk_server_callback(SSL *ssl,             const char *identity,                                unsigned char *psk, unsigned int max_psk_len) {
+	struct clsrvconf *conf;
+
+	debug(DBG_DBG, "psk_server_callback: Trying to find PSK");
+
+	conf = (struct clsrvconf *) SSL_get_ex_data(ssl, RADSEC_TLS_EX_INDEX_CLSRVCONF);
+
+	if(conf->tlspsk == NULL || conf->tlspskidentity == NULL ) {
+		debug(DBG_DBG, "psk_server_callback: No TLSPSK for server %s configured. Resuming with certificates.", conf->name);
+		return 0;
+	}
+	if( (strlen(conf->tlspskidentity) != strlen(identity)) || (strcmp(conf->tlspskidentity, identity) != 0)) {
+		debug(DBG_WARN, "psk_server_callback: TLSPSKIdentity for %s did not match.", conf->name);
+		return 0;
+	}
+	if(strlen(conf->tlspsk) > max_psk_len){
+		debug(DBG_WARN, "psk_server_callback: The PSK is too long for server %s", conf->name);
+		return 0;
+	}
+	memcpy(psk, (unsigned char *)conf->tlspsk, strlen(conf->tlspsk));
+	return strlen(conf->tlspsk);
+}
+
 static int cookie_calculate_hash(struct sockaddr *peer, time_t time, uint8_t *result, unsigned int *resultlength) {
     uint8_t *buf;
     int length;
@@ -448,6 +513,7 @@ static SSL_CTX *tlscreatectx(uint8_t type, struct tls *conf) {
         SSL_CTX_set_default_passwd_cb_userdata(ctx, conf->certkeypwd);
         SSL_CTX_set_default_passwd_cb(ctx, pem_passwd_cb);
     }
+    // TODO Don't force certificates if TLS-PSK.
     if (!SSL_CTX_use_certificate_chain_file(ctx, conf->certfile) ||
         !SSL_CTX_use_PrivateKey_file(ctx, conf->certkeyfile, SSL_FILETYPE_PEM) ||
         !SSL_CTX_check_private_key(ctx)) {
@@ -456,6 +522,10 @@ static SSL_CTX *tlscreatectx(uint8_t type, struct tls *conf) {
         debug(DBG_ERR, "tlscreatectx: Error initialising SSL/TLS in TLS context %s", conf->name);
         SSL_CTX_free(ctx);
         return NULL;
+    }
+
+    if (conf->psk_hint) {
+    	SSL_CTX_use_psk_identity_hint(ctx, conf->psk_hint);
     }
 
     if (conf->policyoids) {
@@ -902,6 +972,7 @@ int conftls_cb(struct gconffile **cf, void *arg, char *block, char *opt, char *v
               "TlsVersion", CONF_STR, &tlsversion,
               "DtlsVersion", CONF_STR, &dtlsversion,
               "DhFile", CONF_STR, &dhfile,
+			  "PSKHint", CONF_STR, &conf->psk_hint,
 			  NULL
 	    )) {
 	debug(DBG_ERR, "conftls_cb: configuration error in block %s", val);
