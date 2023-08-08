@@ -4,8 +4,8 @@
 #ifndef _DNS_H
 #define _DNS_H
 
-#include <stdlib.h>
 #include <arpa/nameser.h>
+#include <stdlib.h>
 
 /* maximum character string length in a DNS response, including null-terminator */
 #define MAXCHARSTRLEN 256

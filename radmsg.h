@@ -54,7 +54,6 @@
 #define RAD_Acct_Status_Accounting_Off 8
 #define RAD_Acct_Status_Failed 15
 
-
 #define RAD_VS_ATTR_MS_MPPE_Send_Key 16
 #define RAD_VS_ATTR_MS_MPPE_Recv_Key 17
 
@@ -96,7 +95,7 @@ int resizeattr(struct tlv *attr, uint8_t newlen);
  * @return the string representation or NULL, if the attribute/value is not in the 
  * dictionary
  */
-const char* attrval2strdict(struct tlv *attr);
+const char *attrval2strdict(struct tlv *attr);
 
 #endif /*_RADMSG_H*/
 

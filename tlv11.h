@@ -18,7 +18,7 @@ void rmtlv(struct list *, uint8_t);
 uint8_t *tlv2str(struct tlv *tlv);
 struct tlv *resizetlv(struct tlv *, uint8_t);
 uint32_t tlv2longint(struct tlv *tlv);
-char* tlv2ipv4addr(struct tlv *tlv);
+char *tlv2ipv4addr(struct tlv *tlv);
 
 /* Local Variables: */
 /* c-file-style: "stroustrup" */

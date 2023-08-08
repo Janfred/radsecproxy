@@ -6,8 +6,8 @@
 #ifndef _TLSCOMMON_H
 #define _TLSCOMMON_H
 
-#include <openssl/ssl.h>
 #include "hostport.h"
+#include <openssl/ssl.h>
 
 #if OPENSSL_VERSION_NUMBER < 0x10100000L
 #define ASN1_STRING_get0_data(o) ((o)->data)
@@ -31,7 +31,7 @@ struct tls {
     int dtlsminversion;
     int dtlsmaxversion;
 #if OPENSSL_VERSION_NUMBER >= 0x30000000
-    EVP_PKEY* dhparam;
+    EVP_PKEY *dhparam;
 #else
     DH *dhparam;
 #endif
@@ -40,7 +40,7 @@ struct tls {
     X509_VERIFY_PARAM *vpm;
     SSL_CTX *tlsctx;
     SSL_CTX *dtlsctx;
-	SSL *dtlssslprep;
+    SSL *dtlssslprep;
     pthread_mutex_t lock;
 };
 
@@ -62,7 +62,7 @@ void freematchcertattr(struct clsrvconf *conf);
 void tlsreloadcrls(void);
 int tlssetsni(SSL *ssl, char *sni);
 int sslconnecttimeout(SSL *ssl, int timeout);
-int sslaccepttimeout (SSL *ssl, int timeout);
+int sslaccepttimeout(SSL *ssl, int timeout);
 int sslreadtimeout(SSL *ssl, unsigned char *buf, int num, int timeout, pthread_mutex_t *lock);
 int sslwrite(SSL *ssl, void *buf, int num, uint8_t blocking);
 int radtlsget(SSL *ssl, int timeout, pthread_mutex_t *lock, uint8_t **buf);
