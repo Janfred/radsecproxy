@@ -3368,7 +3368,7 @@ int confrealm_cb(struct gconffile **cf, void *arg, char *block, char *opt, char 
     debug(DBG_DBG, "confrealm_cb called for %s", block);
 
     if (!getgenericconfig(cf, block,
-                          "subrealm", CONF_STR, &subrealms,
+                          "subrealms", CONF_STR, &subrealms,
                           "server", CONF_MSTR, &servers,
                           "accountingServer", CONF_MSTR, &accservers,
                           "ReplyMessage", CONF_STR, &msg,
